@@ -1,0 +1,76 @@
+
+#
+# Сервер для обработки сообщений от клиентов
+# Попробовал сделать так, что бы сервер запоминал имена залогиненных клиентов и отслылал последние 10 сообщений
+# Долго думал, как сделать, но в итоге сделал на основе выложенного кода, оригинальность только 50%
+# Баг с русскими буквами
+
+from twisted.internet import reactor
+from twisted.internet.protocol import ServerFactory, connectionDone
+from twisted.protocols.basic import LineOnlyReceiver
+
+
+class ServerProtocol(LineOnlyReceiver):
+    factory: 'Server'
+    login: str = None
+
+    def connectionMade(self):
+        self.factory.clients.append(self)
+
+    def connectionLost(self, reason=connectionDone):
+        self.factory.clients.remove(self)
+
+    def lineReceived(self, line: bytes):
+        content = line.decode()
+
+        if self.login is not None:
+            content = f"MF {self.login}:  {content}"
+            self.factory.messages.append(content.encode())
+            for user in self.factory.clients:
+                if user is not self:
+                    user.sendLine(content.encode())
+        else:
+
+            if content.startswith("login:"):
+                self.login = content.replace("login:", "")
+                if self.login in self.factory.name:
+                    self.sendLine("Login used".encode())
+                    self.transport.loseConnection()
+                else:
+                    self.factory.name.append(self.login)
+                    self.sendLine("Welcome!".encode())
+                    self.send_history()
+            else:
+                self.sendLine("Invalid login".encode())
+
+    def send_history(self):
+        if len(self.factory.messages) == 0:
+            return
+        elif len(self.factory.messages) < 11:
+            for item in self.factory.messages:
+                self.sendLine(item)
+        else:
+            V = len(self.factory.messages) - 10
+            while V < len(self.factory.messages):
+                self.sendLine(self.factory.messages[V])
+                V += 1
+
+
+class Server(ServerFactory):
+    protocol = ServerProtocol
+    clients: list
+    name: list
+    messages: list
+
+    def startFactory(self):
+        self.clients = []
+        self.name = []
+        self.messages = []
+        print("Server started")
+
+    def stopFactory(self):
+        print("Server stopped")
+
+
+reactor.listenTCP(4444, Server())
+reactor.run()
